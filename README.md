@@ -1,2 +1,2 @@
-# Backend-API-Python-FastAPI-PostgreSQL.
+# bank-api.
 FastAPI PostgreSQL SQLAlchemy Pydantic 

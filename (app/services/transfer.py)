@@ -1,0 +1,51 @@
+from sqlalchemy.orm import Session
+from fastapi import HTTPException, status
+from ..models import Account, Transaction
+
+class TransferService:
+    @staticmethod
+    def transfer_funds(db: Session, sender_id: int, receiver_id: int, amount: float):
+        if amount <= 0:
+            raise HTTPException(status_code=400, detail="Сумма должна быть больше нуля")
+
+        try:
+            # Используем контекстный менеджер для транзакции
+            with db.begin_nested(): # Создаем точку сохранения внутри транзакции
+                # 1. Блокируем строки отправителя и получателя (защита от Race Condition)
+                sender = db.query(Account).filter(Account.id == sender_id).with_for_update().first()
+                receiver = db.query(Account).filter(Account.id == receiver_id).with_for_update().first()
+
+                if not sender or not receiver:
+                    raise HTTPException(status_code=404, detail="Счет не найден")
+
+                if sender_id == receiver_id:
+                    raise HTTPException(status_code=400, detail="Нельзя переводить самому себе")
+
+                # 2. Проверка баланса
+                if sender.balance < amount:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Недостаточно средств. Баланс: {sender.balance}"
+                    )
+
+                # 3. Сама операция (изменение баланса)
+                sender.balance -= amount
+                receiver.balance += amount
+
+                # 4. Логирование транзакции
+                new_transaction = Transaction(
+                    sender_id=sender_id,
+                    receiver_id=receiver_id,
+                    amount=amount
+                )
+                db.add(new_transaction)
+
+            # Если всё ок, фиксируем изменения
+            db.commit()
+            return {"status": "success", "transaction_id": new_transaction.id}
+
+        except Exception as e:
+            db.rollback()
+            if isinstance(e, HTTPException):
+                raise e
+            raise HTTPException(status_code=500, detail="Внутренняя ошибка при переводе")
